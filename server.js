@@ -7,6 +7,16 @@ const url = require("url");
 const parse = require('node-readability');
 const sanitizeHtml = require('sanitize-html');
 const htmlMetadata = require('html-metadata');
+const lda = require('lda');
+const keywordExtractor = require("keyword-extractor");
+const headlineParser = require("eklem-headline-parser");
+const pluralize = require('pluralize');
+const synonyms = require('synonyms');
+const simhashJs = require('simhash-js');
+const simhash = new simhashJs.SimHash({
+  maxFeatures: 1024,
+  kshingles: 16
+});
 
 // Set up body parser
 app.use(bodyParser.urlencoded({extended:true}));
@@ -38,24 +48,79 @@ apiRouter.post('/article', (req, res) => {
 
     // Start formatting the response
     var data = {
-      title: article.title
+      title: {
+        text: article.title,
+        simhash: simhash.hash(article.title)
+      }
     };
-
-    // Sanitized content
-    data.content = sanitizeHtml(article.content, {
-      allowedTags: [ 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'p', 'ul', 'ol',
-        'nl', 'li', 'b', 'i', 'strong', 'em', 'strike', 'code', 'hr', 'br' ]
-    }).trim();
 
     // Metadata
     htmlMetadata.loadFromString(article.html).then(function(metadata){
       data.meta = metadata;
+
+      // Sanitized content
+      data.content = {};
+      data.content.text = sanitizeHtml(article.content, {
+        allowedTags: [ 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'p', 'ul', 'ol',
+          'nl', 'li', 'b', 'i', 'strong', 'em', 'strike', 'code', 'hr', 'br' ]
+      }).replace(/<\/?[^>]+(>|$)/g, "").replace(/\s+/g,' ').trim();
+      data.content.simhash = simhash.hash(data.content.text);
+
+      // Quotes
+      quotes = [];
+      data.content.text.match(/"([^"]+)"/g).forEach((item, i) => {
+        if (i === 0) {
+          return;
+        }
+        if (item.toString().length < 40) {
+          return;
+        }
+        if (item.toString().length > 140) {
+          return;
+        }
+        var text = item.substr(1, item.length -2);
+        quotes.push({
+          text: text,
+          simhash: simhash.hash(text)
+        });
+      });
+      data.quotes = {short:quotes};
+
+      // Run LDA to get terms for 2 topics (5 terms each).
+      data.nlp = {};
+      var ldaResult = lda([data.content.text], 3, 5);
+      data.nlp.lda = ldaResult;
+
+      // Keyword extractor
+      data.nlp.keywords = keywordExtractor.extract(data.content.text, {
+        language: "english",
+        remove_digits: true,
+        return_changed_case:true,
+        remove_duplicates: true,
+        return_chained_words: true,
+        remove_max_ngrams: false
+      });
+
+      // Find the most relevant keywords in the headline, sorted by number of appearances in the body text
+      data.nlp.top_keywords = [];
+      var topKeywords = headlineParser.findKeywords(data.title.text + ' ' + data.meta.general.description, data.content.text, 10);
+      topKeywords.forEach((topKeyword) => {
+        data.nlp.top_keywords.push({
+          text: pluralize.singular(topKeyword),
+          synonyms: {
+            nouns: synonyms(topKeyword, 'n'),
+            verbs: synonyms(topKeyword, 'v')
+          }
+        });
+      });
       console.log("Article fetched: " + articleUrl + ": " , data);
       res.status(200).json({article: data});
-    });
+  });
 
     // Close article to clean up jsdom and prevent leaks
-    article.close();
+    setTimeout(function(){
+      article.close();
+    }, 500)
   });
 });
 
