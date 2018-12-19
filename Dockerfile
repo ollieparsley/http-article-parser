@@ -8,5 +8,5 @@ COPY . .
 RUN npm install
 
 # Enable the http port and start the service
-EXPOSE 8080
+EXPOSE 3000
 CMD [ "npm", "start" ]
