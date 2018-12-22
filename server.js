@@ -43,7 +43,8 @@ apiRouter.post('/article', (req, res) => {
   parse(articleUrl, (err, article, meta) => {
     if (err) {
       console.error("Parse error: " + articleUrl + ": " , err);
-      res.status(500).json({message: 'Something went wrong parsing the response', exception: err.message});
+      return res.status(500).json({message: 'Something went wrong parsing the response', exception: err.message});
+
     }
 
     // Start formatting the response
@@ -54,10 +55,11 @@ apiRouter.post('/article', (req, res) => {
       }
     };
 
-    // Metadata
-    htmlMetadata.loadFromString(article.html).then(function(metadata){
+    var handleTheRest = function(metadata) {
       try {
-        data.meta = metadata;
+        if (metadata) {
+          data.meta = metadata;
+        }
 
         // Sanitized content
         data.content = {};
@@ -69,23 +71,26 @@ apiRouter.post('/article', (req, res) => {
 
         // Quotes
         quotes = [];
-        data.content.text.match(/"([^"]+)"/g).forEach((item, i) => {
-          if (i === 0) {
-            return;
-          }
-          if (item.toString().length < 40) {
-            return;
-          }
-          if (item.toString().length > 140) {
-            return;
-          }
-          var text = item.substr(1, item.length -2);
-          quotes.push({
-            text: text,
-            simhash: simhash.hash(text)
+        quoteMatches = data.content.text.match(/"([^"]+)"/g);
+        if (quoteMatches) {
+          data.content.text.match(/"([^"]+)"/g).forEach((item, i) => {
+            if (i === 0) {
+              return;
+            }
+            if (item.toString().length < 40) {
+              return;
+            }
+            if (item.toString().length > 140) {
+              return;
+            }
+            var text = item.substr(1, item.length -2);
+            quotes.push({
+              text: text,
+              simhash: simhash.hash(text)
+            });
           });
-        });
-        data.quotes = {short:quotes};
+          data.quotes = {short:quotes};
+        }
 
         // Run LDA to get terms for 2 topics (5 terms each).
         data.nlp = {};
@@ -106,7 +111,8 @@ apiRouter.post('/article', (req, res) => {
         data.nlp.top_keywords = {
           keywords: []
         };
-        var topKeywords = headlineParser.findKeywords(data.title.text + ' ' + data.meta.general.description, data.content.text, 10);
+        var description = metadata ? metadata.general.description : '';
+        var topKeywords = headlineParser.findKeywords(data.title.text + ' ' + description, data.content.text, 10);
         keywordList = [];
         topKeywords.forEach((topKeyword) => {
           keywordList.push(topKeyword);
@@ -127,7 +133,18 @@ apiRouter.post('/article', (req, res) => {
         console.error("Response error: " + articleUrl + ": " , err);
         res.status(500).json({message: 'Something went wrong creating the response', exception: err.message});
       }
-    });
+    }
+
+    try {
+      // Metadata
+      htmlMetadata.loadFromString(article.html).then(function(metadata){
+        handleTheRest(metadata);
+      });
+    } catch(err) {
+      console.error("Metadata fetch error: " + articleUrl + ": " , err);
+      handleTheRest(false);
+
+    }
 
     // Close article to clean up jsdom and prevent leaks
     setTimeout(function(){
