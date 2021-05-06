@@ -31,7 +31,7 @@
     "lda": "^0.2.0",
     "node-readability": "github:luin/readability",
     "pluralize": "^7.0.0",
-    "sanitize-html": "^1.27.5",
+    "sanitize-html": "^2.3.2",
     "simhash-js": "^1.0.0",
     "synonyms": "^1.0.1",
     "underscore.string": ">=3.3.5"
